@@ -8,13 +8,17 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.megamaced.nccollectives.data.auth.ImportedSsoAccount
+import com.megamaced.nccollectives.data.auth.SsoAccountHolder
 import com.megamaced.nccollectives.data.prefs.UserPreferences
 import com.megamaced.nccollectives.data.prefs.UserPrefs
 import com.megamaced.nccollectives.share.SharePayload
 import com.megamaced.nccollectives.share.SharePayloadHolder
 import com.megamaced.nccollectives.ui.navigation.NcCollectivesScaffold
 import com.megamaced.nccollectives.ui.theme.NcCollectivesTheme
+import com.nextcloud.android.sso.AccountImporter
 import dagger.hilt.android.AndroidEntryPoint
+import timber.log.Timber
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -24,6 +28,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var userPreferences: UserPreferences
+
+    @Inject
+    lateinit var ssoAccountHolder: SsoAccountHolder
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -44,6 +51,53 @@ class MainActivity : ComponentActivity() {
             NcCollectivesTheme(themeMode = prefs.themeMode, textScale = prefs.textScale) {
                 NcCollectivesScaffold()
             }
+        }
+    }
+
+    /**
+     * Second half of the Nextcloud SSO account import.
+     *
+     * The released SSO library has no `ActivityResultContract`, so
+     * `AccountImporter.pickNewAccount` — started from `LoginScreen` — uses
+     * `startActivityForResult` and its two-step flow reports back here:
+     * first the account chooser, then the Files app's grant-access screen.
+     * `AccountImporter.onActivityResult` drives both steps and only invokes
+     * the callback once an account has actually been granted; the result is
+     * handed to [ssoAccountHolder], which `LoginViewModel` observes.
+     *
+     * `super` first: `ComponentActivity` dispatches to the modern
+     * `ActivityResultRegistry` from here, and everything else in this app
+     * (camera capture, file picking) relies on that path.
+     */
+    @Deprecated("AccountImporter has no ActivityResultContract in the released SSO library")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?,
+    ) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != AccountImporter.CHOOSE_ACCOUNT_SSO &&
+            requestCode != AccountImporter.REQUEST_AUTH_TOKEN_SSO
+        ) {
+            return
+        }
+        try {
+            AccountImporter.onActivityResult(requestCode, resultCode, data, this) { account ->
+                ssoAccountHolder.publish(
+                    ImportedSsoAccount(
+                        accountName = account.name,
+                        userId = account.userId,
+                        serverUrl = account.url,
+                    ),
+                )
+            }
+        } catch (e: Exception) {
+            // Backing out of the account chooser arrives as a thrown
+            // AccountImportCancelledException rather than a return value, so
+            // the ordinary "user changed their mind" path lands here too.
+            // Nothing to report: the login screen is still on screen.
+            Timber.d(e, "Nextcloud SSO account import did not complete")
         }
     }
 

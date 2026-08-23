@@ -1,8 +1,9 @@
 package com.megamaced.nccollectives.ui.screen.login
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,9 +37,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nextcloud.android.sso.AccountImporter
 import com.nextcloud.android.sso.FilesAppTypeRegistry
-import com.nextcloud.android.sso.ImportSsoAccount
-import com.nextcloud.android.sso.model.SingleSignOnAccount
 import timber.log.Timber
 
 @Composable
@@ -51,21 +51,7 @@ fun LoginScreen(viewModel: LoginViewModel = hiltViewModel()) {
     // per composition rather than per frame; installing the Nextcloud app
     // while this screen is open is rare enough to leave to a restart.
     val filesAppInstalled = remember(context) { isNextcloudFilesAppInstalled(context) }
-
-    // The picker Activity lives in the SSO library. A null result means the
-    // user backed out (or the library surfaced its own error dialog), so
-    // there is nothing to report here.
-    val importSsoAccount = rememberLauncherForActivityResult<Void?, SingleSignOnAccount?>(
-        ImportSsoAccount(),
-    ) { account ->
-        if (account != null) {
-            viewModel.onSsoAccountImported(
-                accountName = account.name,
-                userId = account.userId,
-                serverUrl = account.url,
-            )
-        }
-    }
+    val activity = remember(context) { context.findActivity() }
 
     LaunchedEffect(uiState.loginUrl) {
         uiState.loginUrl?.let { url -> launchCustomTab(context, url) }
@@ -106,7 +92,7 @@ fun LoginScreen(viewModel: LoginViewModel = hiltViewModel()) {
 
             if (filesAppInstalled) {
                 Button(
-                    onClick = { importSsoAccount.launch(null) },
+                    onClick = { pickNextcloudAccount(activity, viewModel::onSsoImportFailed) },
                     enabled = !uiState.isLoading && !uiState.isPolling,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -199,8 +185,49 @@ fun LoginScreen(viewModel: LoginViewModel = hiltViewModel()) {
 @Suppress("DEPRECATION") // getPackageInfo(String, Int); the flags-object overload is API 33+.
 private fun isNextcloudFilesAppInstalled(context: Context): Boolean =
     FilesAppTypeRegistry.getInstance().types.any { type ->
-        runCatching { context.packageManager.getPackageInfo(type.packageId(), 0) }.isSuccess
+        runCatching { context.packageManager.getPackageInfo(type.packageId, 0) }.isSuccess
     }
+
+/**
+ * Hand off to the Nextcloud app's account picker.
+ *
+ * `pickNewAccount` reports both of its failure modes — no Files app
+ * installed, and (below API 26 only) a missing `GET_ACCOUNTS` grant — by
+ * throwing, so `runCatching` is the whole error path. Neither is fatal to
+ * this screen: the server-URL login below still works.
+ *
+ * The result does not come back here. It arrives two Activity results later
+ * in `MainActivity.onActivityResult` and reaches `LoginViewModel` through
+ * `SsoAccountHolder`.
+ */
+private fun pickNextcloudAccount(
+    activity: Activity?,
+    onError: (String) -> Unit,
+) {
+    if (activity == null) {
+        onError("Couldn't open the Nextcloud account picker.")
+        return
+    }
+    runCatching { AccountImporter.pickNewAccount(activity) }
+        .onFailure { onError(it.message ?: "The Nextcloud app couldn't be opened.") }
+}
+
+/**
+ * Unwrap the Activity behind a Compose `LocalContext`.
+ *
+ * `AccountImporter.pickNewAccount` needs a real Activity — it calls
+ * `startActivityForResult` on it, and the result comes back through
+ * `MainActivity.onActivityResult`. The context Compose hands out is a
+ * `ContextThemeWrapper` around it, so unwrap rather than cast.
+ */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
 
 private fun launchCustomTab(
     context: Context,

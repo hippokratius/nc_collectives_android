@@ -6,11 +6,13 @@ import com.megamaced.nccollectives.data.auth.LoginFlowInitResponse
 import com.megamaced.nccollectives.data.auth.LoginFlowStatus
 import com.megamaced.nccollectives.data.auth.NextcloudLoginFlow
 import com.megamaced.nccollectives.data.auth.SessionManager
+import com.megamaced.nccollectives.data.auth.SsoAccountHolder
 import com.megamaced.nccollectives.data.auth.isSameServerHttpsUrl
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -31,9 +33,28 @@ class LoginViewModel
     constructor(
         private val loginFlow: NextcloudLoginFlow,
         private val sessionManager: SessionManager,
+        private val ssoAccountHolder: SsoAccountHolder,
     ) : ViewModel() {
         private val _uiState = MutableStateFlow(LoginUiState())
         val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+
+        init {
+            // An account imported from the Nextcloud app comes back through
+            // `MainActivity.onActivityResult`, not through anything this
+            // screen launched, so it is collected rather than awaited.
+            // `consume()` first: the holder outlives this ViewModel, and a
+            // recreation must not re-import an account that is already signed in.
+            viewModelScope.launch {
+                ssoAccountHolder.imported.filterNotNull().collect { account ->
+                    ssoAccountHolder.consume()
+                    onSsoAccountImported(
+                        accountName = account.accountName,
+                        userId = account.userId,
+                        serverUrl = account.serverUrl,
+                    )
+                }
+            }
+        }
 
         fun onHostChanged(host: String) {
             _uiState.update { it.copy(hostInput = host, error = null) }
@@ -142,13 +163,18 @@ class LoginViewModel
             }
         }
 
+        /** Surface a failure from the account picker on the login screen. */
+        fun onSsoImportFailed(message: String) {
+            _uiState.update { it.copy(error = message) }
+        }
+
         /**
          * Adopt an account handed over by the Nextcloud Files app.
          *
          * Takes the three fields off `SingleSignOnAccount` rather than the
          * object itself so this stays a plain ViewModel — the SSO library's
-         * types don't need to leak past the Composable that launches the
-         * picker.
+         * types stay behind `SsoAccountHolder`, and the token on that object
+         * never leaves the SSO package.
          *
          * The https check is the SSO counterpart of [startLogin]'s S-1 rule.
          * It matters more here, not less: an SSO request is carried out by
@@ -157,7 +183,7 @@ class LoginViewModel
          * failure mode — `HostInterceptor` throws on a non-https stored host,
          * so the session would look fine and then fail every single request.
          */
-        fun onSsoAccountImported(
+        private fun onSsoAccountImported(
             accountName: String?,
             userId: String?,
             serverUrl: String?,

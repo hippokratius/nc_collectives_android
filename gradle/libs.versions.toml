@@ -26,7 +26,7 @@ kotlinxSerialization = "1.11.0"
 
 # Nextcloud Single Sign-On — account hand-off from the Nextcloud Files app.
 # JitPack-only (see the scoped repository in settings.gradle.kts).
-nextcloudSso = "1.0.0"
+nextcloudSso = "1.3.1"
 
 # Core library desugaring. Not a choice: the SSO library's AAR metadata
 # declares it as required, so AGP fails the build without it (checkAarMetadata).
