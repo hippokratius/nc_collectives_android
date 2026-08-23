@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nextcloud.android.sso.AccountImporter
-import com.nextcloud.android.sso.FilesAppTypeRegistry
+import com.nextcloud.android.sso.model.FilesAppType
 import timber.log.Timber
 
 @Composable
@@ -178,13 +178,13 @@ fun LoginScreen(viewModel: LoginViewModel = hiltViewModel()) {
  * granted this app access, the Files app's accounts aren't necessarily
  * visible to us through `AccountManager`, so counting them would hide the
  * button in exactly the case it exists for. The package IDs come from the SSO
- * library's own registry (prod / beta / QA), and the `<queries>` entries its
+ * library's own enum (prod / beta / QA), and the `<queries>` entries its
  * manifest contributes are what make them visible under Android 11+ package
  * visibility.
  */
 @Suppress("DEPRECATION") // getPackageInfo(String, Int); the flags-object overload is API 33+.
 private fun isNextcloudFilesAppInstalled(context: Context): Boolean =
-    FilesAppTypeRegistry.getInstance().types.any { type ->
+    FilesAppType.values().any { type ->
         runCatching { context.packageManager.getPackageInfo(type.packageId, 0) }.isSuccess
     }
 
