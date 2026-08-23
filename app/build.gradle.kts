@@ -88,6 +88,10 @@ android {
     }
 
     compileOptions {
+        // Required by com.github.nextcloud:Android-SingleSignOn, which declares
+        // it in its AAR metadata — `checkDebugAarMetadata` fails the build
+        // outright without it, whatever this app's own minSdk is.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
@@ -176,6 +180,7 @@ dependencies {
     // every HTTP request inside the Files app over AIDL; SsoBridgeInterceptor
     // is what plugs that channel into this app's OkHttp stack.
     implementation(libs.nextcloud.sso)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     // Image loading (reuses the authenticated OkHttp client)
     implementation(libs.coil.compose)

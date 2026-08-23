@@ -28,6 +28,11 @@ kotlinxSerialization = "1.11.0"
 # JitPack-only (see the scoped repository in settings.gradle.kts).
 nextcloudSso = "1.0.0"
 
+# Core library desugaring. Not a choice: the SSO library's AAR metadata
+# declares it as required, so AGP fails the build without it (checkAarMetadata).
+# Pinned to the version that library builds against.
+desugarJdkLibs = "2.1.5"
+
 # Image loading
 coil = "3.4.0"
 
@@ -108,6 +113,9 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 
 # Nextcloud Single Sign-On
 nextcloud-sso = { group = "com.github.nextcloud", name = "Android-SingleSignOn", version.ref = "nextcloudSso" }
+
+# Core library desugaring (required by the SSO library's AAR metadata)
+desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 
 # Coil (uses the authenticated OkHttp client)
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
