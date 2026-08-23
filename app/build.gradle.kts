@@ -101,6 +101,26 @@ android {
         buildConfig = true
     }
 
+    lint {
+        // The SSO library ships `UiExceptionManager`, whose
+        // `showNotificationForException()` calls `NotificationManager.notify()`.
+        // Lint sees that call in the merged code and demands POST_NOTIFICATIONS
+        // for the whole app, reported against our AndroidManifest.
+        //
+        // Nothing here can reach it. The single library entry point this app
+        // touches is `AccountImporter.onActivityResult`, which uses the sibling
+        // `showDialogForException()`; the notification method has no caller in
+        // this app and R8 drops it. Declaring POST_NOTIFICATIONS to satisfy the
+        // check would add a permission the app never exercises, and contradict
+        // a documented property of it — results are shown in the UI precisely
+        // so that no notification permission is needed.
+        //
+        // The cost of disabling rather than baselining: if this app ever does
+        // post a notification, lint will no longer be the thing that reminds
+        // you to declare the permission.
+        disable += "NotificationPermission"
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
