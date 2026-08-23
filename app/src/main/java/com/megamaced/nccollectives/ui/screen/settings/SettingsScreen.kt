@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.megamaced.nccollectives.BuildConfig
+import com.megamaced.nccollectives.data.auth.AuthMode
 import com.megamaced.nccollectives.data.prefs.EditorPreference
 import com.megamaced.nccollectives.data.prefs.SyncCadence
 import com.megamaced.nccollectives.data.prefs.SyncStatus
@@ -162,6 +163,21 @@ internal fun SettingsScreen(
                     Text(
                         account.host,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        when (account.authMode) {
+                            AuthMode.Sso -> {
+                                "Signed in through the Nextcloud app. Revoke access there, " +
+                                    "or under Settings → Security on your server."
+                            }
+
+                            AuthMode.AppPassword -> {
+                                "Signed in with a device-specific app password. Revoke it " +
+                                    "under Settings → Security on your server."
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

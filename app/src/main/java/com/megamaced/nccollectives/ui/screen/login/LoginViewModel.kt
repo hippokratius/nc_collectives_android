@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import javax.inject.Inject
 
 data class LoginUiState(
@@ -139,6 +140,51 @@ class LoginViewModel
                     }
                 }
             }
+        }
+
+        /**
+         * Adopt an account handed over by the Nextcloud Files app.
+         *
+         * Takes the three fields off `SingleSignOnAccount` rather than the
+         * object itself so this stays a plain ViewModel — the SSO library's
+         * types don't need to leak past the Composable that launches the
+         * picker.
+         *
+         * The https check is the SSO counterpart of [startLogin]'s S-1 rule.
+         * It matters more here, not less: an SSO request is carried out by
+         * the Files app, so this app's `network_security_config` cleartext
+         * ban never gets a say. Refusing at import also avoids a worse
+         * failure mode — `HostInterceptor` throws on a non-https stored host,
+         * so the session would look fine and then fail every single request.
+         */
+        fun onSsoAccountImported(
+            accountName: String?,
+            userId: String?,
+            serverUrl: String?,
+        ) {
+            if (accountName.isNullOrBlank() || userId.isNullOrBlank() || serverUrl.isNullOrBlank()) {
+                _uiState.update {
+                    it.copy(error = "The Nextcloud app returned an incomplete account.")
+                }
+                return
+            }
+            val parsed = serverUrl.toHttpUrlOrNull()
+            if (parsed == null || parsed.scheme != "https") {
+                _uiState.update {
+                    it.copy(
+                        error = "That Nextcloud account uses a non-HTTPS address " +
+                            "($serverUrl), which this app refuses.",
+                    )
+                }
+                return
+            }
+
+            sessionManager.onSsoLoginSuccess(
+                host = serverUrl,
+                loginName = userId,
+                accountName = accountName,
+            )
+            _uiState.update { it.copy(loginSuccess = true) }
         }
 
         fun dismissError() {

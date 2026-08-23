@@ -171,6 +171,12 @@ dependencies {
     implementation(libs.okhttp.logging.interceptor)
     implementation(libs.kotlinx.serialization.json)
 
+    // Nextcloud Single Sign-On — hands the app an account that is already
+    // set up in the Nextcloud Files app. In that mode the library performs
+    // every HTTP request inside the Files app over AIDL; SsoBridgeInterceptor
+    // is what plugs that channel into this app's OkHttp stack.
+    implementation(libs.nextcloud.sso)
+
     // Image loading (reuses the authenticated OkHttp client)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)

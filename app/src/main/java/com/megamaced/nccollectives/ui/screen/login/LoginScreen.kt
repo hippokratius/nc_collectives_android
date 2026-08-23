@@ -2,6 +2,7 @@ package com.megamaced.nccollectives.ui.screen.login
 
 import android.content.Context
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -30,9 +32,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nextcloud.android.sso.FilesAppTypeRegistry
+import com.nextcloud.android.sso.ImportSsoAccount
+import com.nextcloud.android.sso.model.SingleSignOnAccount
 import timber.log.Timber
 
 @Composable
@@ -40,6 +46,26 @@ fun LoginScreen(viewModel: LoginViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Only worth offering when there's an app to import from. Resolved once
+    // per composition rather than per frame; installing the Nextcloud app
+    // while this screen is open is rare enough to leave to a restart.
+    val filesAppInstalled = remember(context) { isNextcloudFilesAppInstalled(context) }
+
+    // The picker Activity lives in the SSO library. A null result means the
+    // user backed out (or the library surfaced its own error dialog), so
+    // there is nothing to report here.
+    val importSsoAccount = rememberLauncherForActivityResult<Void?, SingleSignOnAccount?>(
+        ImportSsoAccount(),
+    ) { account ->
+        if (account != null) {
+            viewModel.onSsoAccountImported(
+                accountName = account.name,
+                userId = account.userId,
+                serverUrl = account.url,
+            )
+        }
+    }
 
     LaunchedEffect(uiState.loginUrl) {
         uiState.loginUrl?.let { url -> launchCustomTab(context, url) }
@@ -77,6 +103,40 @@ fun LoginScreen(viewModel: LoginViewModel = hiltViewModel()) {
             )
 
             Spacer(modifier = Modifier.height(32.dp))
+
+            if (filesAppInstalled) {
+                Button(
+                    onClick = { importSsoAccount.launch(null) },
+                    enabled = !uiState.isLoading && !uiState.isPolling,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Log in with the Nextcloud app")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Pick an account you've already set up in the Nextcloud app — " +
+                        "no browser, no second password.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                HorizontalDivider()
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Or connect to a server directly",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             OutlinedTextField(
                 value = uiState.hostInput,
@@ -124,6 +184,23 @@ fun LoginScreen(viewModel: LoginViewModel = hiltViewModel()) {
         }
     }
 }
+
+/**
+ * Whether any flavour of the Nextcloud Files app is on the device.
+ *
+ * Checks for the *package*, not for importable accounts: before the user has
+ * granted this app access, the Files app's accounts aren't necessarily
+ * visible to us through `AccountManager`, so counting them would hide the
+ * button in exactly the case it exists for. The package IDs come from the SSO
+ * library's own registry (prod / beta / QA), and the `<queries>` entries its
+ * manifest contributes are what make them visible under Android 11+ package
+ * visibility.
+ */
+@Suppress("DEPRECATION") // getPackageInfo(String, Int); the flags-object overload is API 33+.
+private fun isNextcloudFilesAppInstalled(context: Context): Boolean =
+    FilesAppTypeRegistry.getInstance().types.any { type ->
+        runCatching { context.packageManager.getPackageInfo(type.packageId(), 0) }.isSuccess
+    }
 
 private fun launchCustomTab(
     context: Context,

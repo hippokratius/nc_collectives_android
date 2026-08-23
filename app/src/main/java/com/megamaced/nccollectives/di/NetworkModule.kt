@@ -8,6 +8,7 @@ import com.megamaced.nccollectives.data.api.GitHubReleaseService
 import com.megamaced.nccollectives.data.api.HostInterceptor
 import com.megamaced.nccollectives.data.api.SearchApiService
 import com.megamaced.nccollectives.data.api.ServerStatusService
+import com.megamaced.nccollectives.data.api.sso.SsoBridgeInterceptor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -50,6 +51,7 @@ object NetworkModule {
     fun provideOkHttpClient(
         hostInterceptor: HostInterceptor,
         authInterceptor: AuthInterceptor,
+        ssoBridgeInterceptor: SsoBridgeInterceptor,
     ): OkHttpClient =
         OkHttpClient
             .Builder()
@@ -83,7 +85,16 @@ object NetworkModule {
                         },
                     )
                 }
-            }.build()
+            }
+            // Last, and only active when the session was imported from the
+            // Nextcloud Files app: it short-circuits the chain and performs
+            // the request over AIDL instead of over a socket. Registering it
+            // here rather than first is what lets everything above it apply
+            // unchanged — host retargeting, provenance tagging, the 401
+            // streak, and the debug logging, which would otherwise sit below
+            // the short-circuit and never see an SSO request at all.
+            .addInterceptor(ssoBridgeInterceptor)
+            .build()
 
     @Provides
     @Singleton

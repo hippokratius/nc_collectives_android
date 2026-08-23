@@ -2,6 +2,7 @@ package com.megamaced.nccollectives.ui.screen.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.megamaced.nccollectives.data.auth.AuthMode
 import com.megamaced.nccollectives.data.auth.LogoutHandler
 import com.megamaced.nccollectives.data.auth.TokenStore
 import com.megamaced.nccollectives.data.prefs.EditorPreference
@@ -33,6 +34,12 @@ import javax.inject.Inject
 data class AccountInfo(
     val host: String,
     val loginName: String,
+    /**
+     * How this session authenticates. Surfaced because it changes what
+     * "revoke access" means: an app-password session is revoked from the
+     * server's security settings, an SSO one from the Nextcloud app.
+     */
+    val authMode: AuthMode,
 )
 
 data class SettingsUiState(
@@ -240,7 +247,7 @@ class SettingsViewModel
             val credentials = tokenStore.getCredentials()
             return SettingsUiState(
                 account = credentials?.let {
-                    AccountInfo(host = it.host, loginName = it.loginName)
+                    AccountInfo(host = it.host, loginName = it.loginName, authMode = it.mode)
                 },
                 themeMode = prefs.themeMode,
                 textScale = prefs.textScale,

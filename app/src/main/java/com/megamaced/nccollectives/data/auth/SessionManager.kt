@@ -84,6 +84,24 @@ class SessionManager
             appPassword: String,
         ) {
             tokenStore.saveCredentials(host, loginName, appPassword)
+            markAuthenticated()
+        }
+
+        /**
+         * Sign-in via the Nextcloud Files app. [accountName] is
+         * `SingleSignOnAccount.name`; [host] its `url` and [loginName] its
+         * `userId`. No password crosses this boundary — see [AuthMode.Sso].
+         */
+        fun onSsoLoginSuccess(
+            host: String,
+            loginName: String,
+            accountName: String,
+        ) {
+            tokenStore.saveSsoCredentials(host, loginName, accountName)
+            markAuthenticated()
+        }
+
+        private fun markAuthenticated() {
             consecutive401s.set(0)
             signOutInProgress.set(false)
             _authState.value = AuthState.Authenticated

@@ -6,6 +6,7 @@ import android.webkit.WebStorage
 import android.webkit.WebViewDatabase
 import androidx.room.withTransaction
 import coil3.SingletonImageLoader
+import com.megamaced.nccollectives.data.api.sso.SsoApiProvider
 import com.megamaced.nccollectives.data.db.NcCollectivesDatabase
 import com.megamaced.nccollectives.data.prefs.UserPreferences
 import com.megamaced.nccollectives.data.repository.AttachmentRepositoryImpl
@@ -44,7 +45,8 @@ import javax.inject.Singleton
  *     directories, which hold raw file bytes Room doesn't track.
  *  5. Clear Coil's image caches and wipe the WebView's own storage —
  *     see [clearWebViewState].
- *  6. `sessionManager.endSignOut()` clears the encrypted token store
+ *  6. Unbind from the Nextcloud Files app, if this was an SSO session.
+ *  7. `sessionManager.endSignOut()` clears the encrypted token store
  *     and releases the 401-suppression flag.
  */
 @Singleton
@@ -58,6 +60,7 @@ class LogoutHandler
         private val userPreferences: UserPreferences,
         private val sharePayloadHolder: SharePayloadHolder,
         private val okHttpClient: OkHttpClient,
+        private val ssoApiProvider: SsoApiProvider,
     ) {
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -103,6 +106,13 @@ class LogoutHandler
                 // hit the server after the local wipe.
                 okHttpClient.dispatcher.cancelAll()
                 okHttpClient.connectionPool.evictAll()
+                // Same idea one layer out for an SSO session: unbind from the
+                // Nextcloud Files app so the service connection doesn't
+                // outlive the session that opened it. Nothing is revoked
+                // server-side — under SSO the app password belongs to the
+                // Files app, not to us, and the user revokes our access from
+                // there (or from their Nextcloud security settings).
+                ssoApiProvider.close()
                 sessionManager.endSignOut()
             }
         }

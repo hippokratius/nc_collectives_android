@@ -1,5 +1,6 @@
 package com.megamaced.nccollectives.data.api
 
+import com.megamaced.nccollectives.data.auth.AuthMode
 import com.megamaced.nccollectives.data.auth.SessionManager
 import com.megamaced.nccollectives.data.auth.TokenStore
 import com.megamaced.nccollectives.data.auth.serverHostOf
@@ -42,21 +43,34 @@ class AuthInterceptor
             val original = chain.request()
             val credentials = tokenStore.getCredentials()
             val vouchedFor = original.tag(RequestOrigin::class.java) != null
-            val attach = credentials != null &&
+            // "This request runs under the user's session", which is what the
+            // 401 bookkeeping below is about — not "we attach a credential".
+            // Under [AuthMode.Sso] there is no credential to attach: the
+            // Nextcloud Files app performs the request itself, and
+            // `SsoBridgeInterceptor` further down the chain hands back a
+            // response with the status code it reported. That still needs to
+            // reach the streak counter, or a revoked SSO grant would leave the
+            // app retrying forever instead of returning to the login screen.
+            val authenticated = credentials != null &&
                 vouchedFor &&
                 hostMatches(original.url.host, credentials.host)
-            val request = if (attach) {
+            val request = if (authenticated) {
                 checkNotNull(credentials)
-                val basic = "${credentials.loginName}:${credentials.appPassword}"
-                    .encodeUtf8()
-                    .base64()
-                val builder = original
-                    .newBuilder()
-                    .header("Authorization", "Basic $basic")
-                    .header("OCS-APIRequest", "true")
+                val builder = original.newBuilder()
+                if (credentials.mode == AuthMode.AppPassword) {
+                    val basic = "${credentials.loginName}:${credentials.appPassword.orEmpty()}"
+                        .encodeUtf8()
+                        .base64()
+                    builder.header("Authorization", "Basic $basic")
+                    // Only in app-password mode: in SSO mode the Files app
+                    // sets this header itself and *rejects* a request that
+                    // already carries it (InputStreamBinder).
+                    builder.header("OCS-APIRequest", "true")
+                }
                 // Nextcloud OCS endpoints reply with XML by default; ask
                 // for JSON explicitly. Skip for binary/WebDAV endpoints and
-                // for callers that already set an Accept header.
+                // for callers that already set an Accept header. Applies to
+                // both modes — the Files app forwards our headers verbatim.
                 if (original.url.encodedPath.contains("/ocs/") &&
                     original.header("Accept") == null
                 ) {
@@ -72,7 +86,7 @@ class AuthInterceptor
             // Only authenticated requests count toward the 401 streak — a
             // public probe (login-poll, etc) returning 401 doesn't mean our
             // token is dead.
-            if (attach) {
+            if (authenticated) {
                 sessionManager.onAuthenticatedResponse(response.code)
             }
 

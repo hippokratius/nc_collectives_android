@@ -6,6 +6,24 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
+        The Nextcloud Single-Sign-On library declares GET_ACCOUNTS in its own
+        manifest, but only enforces it below API 26
+        (AccountImporter.checkAndroidAccountPermissions). Since API 26,
+        getAccountsByType() returns the accounts an authenticator has made
+        visible to the caller and the permission buys nothing. minSdk here is
+        29, so the merged permission would be dead weight the user still sees
+        in the store listing — drop it.
+
+        The library's <queries> entries for com.nextcloud.client /
+        .android.beta / .android.qa are kept: those are what let the app see
+        whether a Nextcloud Files app is installed at all under Android 11+
+        package visibility.
+    -->
+    <uses-permission
+        android:name="android.permission.GET_ACCOUNTS"
+        tools:node="remove" />
+
+    <!--
         CAMERA isn't strictly required: we launch the system camera via
         ACTION_IMAGE_CAPTURE through a FileProvider URI, which the OS
         already grants to the chosen camera app. Declaring the feature

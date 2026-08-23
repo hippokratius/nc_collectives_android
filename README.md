@@ -21,6 +21,7 @@ An unofficial native Android client for the [Nextcloud Collectives](https://gith
 
 ## Features
 
+- Sign in either by picking an account straight out of the [Nextcloud app](https://github.com/nextcloud/android) (Single Sign-On, no browser and no second password) or with a server URL via Login Flow v2
 - Browse collectives and nested page trees
 - Render markdown pages, including images, links, task lists, tables, syntax-highlighted fenced code blocks (Prism4j, themed against the app's M3 colour scheme), Nextcloud Text callouts (`> [!INFO]` / `[!WARN]` / `[!ERROR]` / `[!SUCCESS]`), and `==text==` highlights
 - View-first by default with a per-page edit toggle. Two editors ship side-by-side: a **native markdown editor** with formatting toolbar + live preview swap that works offline (default), and a **collaborative WebView editor** backed by [Nextcloud Text](https://github.com/nextcloud/text) (beta — multi-user real-time editing, callouts, multi-line tables, math, etc.) used when the server supports it and you're online. Choose the default under **Settings → Editor** (Prefer plain markdown / Prefer collaborative).
@@ -52,7 +53,7 @@ An unofficial native Android client for the [Nextcloud Collectives](https://gith
 1. Download the latest `app-release.apk` from the [Releases](https://github.com/megamaced/nc_collectives_android/releases) page.
 2. On the phone, allow the browser (or the file manager you opened the APK with) to install apps. Android usually prompts the first time; the toggle also lives under **Settings → Apps → Special app access → Install unknown apps**.
 3. Tap the downloaded APK to install. Android will surface the Play Protect scanning prompt — it can flag unrecognised installers but the install itself is safe to proceed with.
-4. Open the app, paste your Nextcloud server URL (e.g. `https://cloud.example.com`), and approve the device in the browser tab that opens. The device-scoped app password is stored in encrypted shared preferences; your real account password is never seen by the app.
+4. Open the app and sign in. With the Nextcloud app installed, tap **Log in with the Nextcloud app** and pick an account you have already set up there. Otherwise paste your Nextcloud server URL (e.g. `https://cloud.example.com`) and approve the device in the browser tab that opens — the device-scoped app password is stored in encrypted shared preferences. Either way, your real account password is never seen by the app. See [Authentication](#authentication) for what the two routes differ in.
 
 ### Updates
 
@@ -62,14 +63,24 @@ The app makes no launch-time or background request to GitHub, and it posts no no
 
 ## Authentication
 
-Login uses the standard Nextcloud [Login Flow v2](https://docs.nextcloud.com/server/latest/developer_manual/client_apis/LoginFlow/index.html#login-flow-v2). You provide your server URL and authorise the app from your browser. The app stores only the device-scoped app password returned by your server — your account password is never seen, transmitted, or stored. You can revoke the device at any time from your Nextcloud security settings.
+Two ways in. Neither one ever sees your account password.
+
+**Log in with the Nextcloud app** (offered when the [Nextcloud Files app](https://github.com/nextcloud/android) is installed). Pick an account you have already set up there and approve the hand-off — no browser, no server URL to type, no second app password. This is the [Single Sign-On](https://github.com/nextcloud/Android-SingleSignOn) mechanism the other Nextcloud clients use.
+
+Worth knowing what it actually does, because it is not just a credential import: Nextcloud SSO hands over a random token that is only an identifier for a channel between the two apps — the Files app keeps nothing but its SHA-512 hash and then **performs every HTTP request on this app's behalf**. So in this mode NC Collectives holds no credential at all, and no request it makes leaves the device except through the Files app, using the account and the connection settings you configured there. Revoke access from the Nextcloud app, or from your server's security settings.
+
+**Log in with a server address.** The original route, and the one to use without the Nextcloud app installed: the standard Nextcloud [Login Flow v2](https://docs.nextcloud.com/server/latest/developer_manual/client_apis/LoginFlow/index.html#login-flow-v2). You provide your server URL and authorise the app from your browser. The app stores only the device-scoped app password returned by your server. You can revoke the device at any time from your Nextcloud security settings.
+
+Settings → Account shows which of the two the current session uses.
 
 ## Privacy & security
 
 - The app talks **only** to the Nextcloud server you configure. The single third-party request — `api.github.com`, for the update check — is made when you tap **Check for updates** in Settings and at no other time; there is no launch-time or background call to GitHub. That call uses a separate OkHttp client so it never carries your Nextcloud credentials. There are no analytics endpoints, no telemetry, no crash reporters, no third-party SDKs that phone home. The release APK has been confirmed clean of any `com.google.android.gms` or `com.google.firebase` classes.
 - No Google Play Services dependencies; no Firebase; no advertising IDs.
-- Plaintext (`http://`) Nextcloud server URLs are refused at login; the app ships with `cleartextTrafficPermitted="false"` in the network-security config.
+- Plaintext (`http://`) Nextcloud server URLs are refused at login — including an SSO account whose server address isn't HTTPS — and the app ships with `cleartextTrafficPermitted="false"` in the network-security config.
 - The device-scoped app password is stored in `EncryptedSharedPreferences` (Tink-backed). Sign-out wipes the keystore entry along with every Room table and DataStore value.
+- Under **Single Sign-On** there is no password to store: the encrypted store holds the server URL, your user ID, and the name of the Nextcloud-app account to route through. Requests are carried out by the Nextcloud app, so its TLS settings apply rather than this app's, and sign-out unbinds from it without touching anything on the server — the grant is yours to revoke there.
+- Permissions declared: `INTERNET` and `ACCESS_NETWORK_STATE`. The SSO library declares `GET_ACCOUNTS` in its own manifest; it is [removed at merge](app/src/main/AndroidManifest.xml) because it has bought nothing since API 26 and the app's `minSdk` is 29. What the library does contribute is a `<queries>` entry for the three Nextcloud app package IDs, which is what lets the app tell whether the Nextcloud app is installed under Android 11+ package visibility.
 - Network requests trust the system certificate store. There is no certificate pinning yet — if your Nextcloud server uses a self-signed CA you'll need to install that CA on your device.
 
 ## Tech stack
@@ -83,6 +94,7 @@ Login uses the standard Nextcloud [Login Flow v2](https://docs.nextcloud.com/ser
 - Markwon for markdown rendering (with Prism4j for syntax-highlighted code blocks) — themed directly against the M3 colour scheme via `AndroidView`
 - System `WebView` + `androidx.webkit` (`WebSettingsCompat`) for the beta collaborative editor against the Nextcloud Text `directEditing` OCS endpoint
 - Tink (`androidx.security:security-crypto`) for the encrypted credential store
+- [Nextcloud Android SingleSignOn](https://github.com/nextcloud/Android-SingleSignOn) for the account hand-off from the Nextcloud app (resolved from JitPack, scoped to that one group in `settings.gradle.kts`). Its AIDL channel is bridged into the existing OkHttp stack by a single interceptor (`SsoBridgeInterceptor`) rather than by rewriting the API layer onto the library's Retrofit builder, so Retrofit, kotlinx.serialization, WebDAV, Coil and the sync workers are identical on both login routes
 - `androidx.core:core-splashscreen` for the launcher splash
 - The system camera intent (via a scoped FileProvider) for in-app photo capture — no CAMERA permission
 
