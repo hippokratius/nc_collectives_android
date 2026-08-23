@@ -2,10 +2,17 @@ name: build
 
 on:
   push:
-    branches: [main]
+    # `claude/**` so a work-in-progress branch produces an installable debug
+    # APK (and exercises the R8 keep rules via assembleRelease) before there
+    # is a PR to attach a run to. The debug-APK artifact is uploaded on every
+    # ref; only tag builds publish anything.
+    branches: [main, 'claude/**']
     tags: ['v*']
   pull_request:
     branches: [main]
+  # Manual runs from the Actions tab, on any ref. GitHub reads the trigger
+  # list from the default branch, so this becomes usable once it lands there.
+  workflow_dispatch:
 
 # Read-only by default. Only the `release` job publishes anything, and it
 # raises its own scope to `contents: write`; PR and main builds never hold it.
