@@ -12,8 +12,11 @@ import org.junit.Test
  */
 class PageEditWebDiagnosticsTest {
     @Test
-    fun `no failures leaves the message as it was`() {
-        assertEquals("Editor is taking a long time to load", editorTimeoutMessage(emptyList()))
+    fun `no failures says so, rather than reading like the old build`() {
+        assertEquals(
+            "Editor is taking a long time to load — no HTTP or script error was reported",
+            editorTimeoutMessage(emptyList()),
+        )
     }
 
     @Test

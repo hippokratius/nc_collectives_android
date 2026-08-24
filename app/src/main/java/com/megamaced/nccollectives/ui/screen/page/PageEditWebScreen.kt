@@ -1001,8 +1001,14 @@ private const val JS_TEXT_CLOSE = "document.querySelector('.icon-close')?.click(
 internal fun editorTimeoutMessage(failures: List<String>): String {
     val base = "Editor is taking a long time to load"
     return when {
-        failures.isEmpty() -> base
+        // Naming the empty case matters as much as naming a failure: without
+        // it this message is byte-identical to the one the build before the
+        // diagnostics showed, so a report of "same message" can't distinguish
+        // "nothing was recorded" from "the new build isn't installed".
+        failures.isEmpty() -> "$base — no HTTP or script error was reported"
+
         failures.size == 1 -> "$base — ${failures.first()}"
+
         else -> "$base — ${failures.first()} (+${failures.size - 1} more)"
     }
 }
