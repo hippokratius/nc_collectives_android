@@ -227,13 +227,23 @@ jobs:
       # The README quotes APK sizes, and a dependency bump can invalidate them
       # silently. Printing them on every run means the number can be corrected
       # from a measurement rather than a guess.
-      - name: Report APK sizes
+      - name: Report APK sizes and debug signer
         if: always()
         run: |
           for apk in app/build/outputs/apk/*/*.apk; do
             [ -f "$apk" ] || continue
             printf '%s  %s\n' "$(du -h "$apk" | cut -f1)" "$apk"
           done
+          # The debug key is committed (see docs/SIGNING.md) precisely so this
+          # fingerprint is the same on every run — that is what lets one CI
+          # debug APK install over the previous one. If it ever changes
+          # between runs, debug installs will start failing as signature
+          # conflicts, and this line is where you find out.
+          debug_apk=app/build/outputs/apk/debug/app-debug.apk
+          if [ -f "$debug_apk" ]; then
+            echo "debug signer:"
+            keytool -printcert -jarfile "$debug_apk" | grep -E 'Owner:|SHA256:' || true
+          fi
 
       # Guards against the failure mode where signing silently degrades and an
       # uninstallable app-release-unsigned.apk gets published.

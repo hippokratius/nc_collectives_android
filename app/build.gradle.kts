@@ -59,6 +59,23 @@ android {
     }
 
     signingConfigs {
+        // Checked in on purpose, unlike the release key. Without it AGP
+        // generates `~/.android/debug.keystore` on demand, so every CI runner
+        // signs the debug APK with a different throwaway key and yesterday's
+        // build can't be upgraded by today's — Android refuses the install as
+        // a signature conflict. A fixed key makes successive CI debug APKs
+        // installable over each other.
+        //
+        // Public by design: the password is the well-known `android`, the same
+        // as the key AGP would have generated. That is the accepted trade-off
+        // for debug keys everywhere, and it reaches only the `.debug`
+        // applicationId — it can never sign the released package.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (hasReleaseSigningConfig) {
             create("release") {
                 storeFile = file(releaseKeystoreFile!!)

@@ -7,10 +7,13 @@ import android.content.Intent
 import android.net.Uri
 import android.net.http.SslError
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -47,6 +50,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -119,6 +123,19 @@ internal fun PageEditWebScreen(
     // never came back with `close()` (slow autosave, network blip).
     var lastBackPressMs by remember { mutableStateOf(0L) }
 
+    // Why the editor never finished loading. Text's JS signals bootstrap over
+    // the bridge; when that signal never arrives the screen has, so far, had
+    // nothing to say beyond "taking a long time". These are the WebView's own
+    // reports — failed sub-requests and JS errors — kept so the timeout can
+    // name a cause instead of restating the symptom. Bounded: a page failing
+    // hundreds of requests is described well enough by its first few.
+    val loadFailures = remember { mutableStateListOf<String>() }
+    val onLoadFailure: (String) -> Unit = { detail ->
+        if (loadFailures.size < MAX_RECORDED_LOAD_FAILURES && detail !in loadFailures) {
+            loadFailures += detail
+        }
+    }
+
     // Close-on-success: when the JS bridge has reported close() and the
     // ViewModel has flushed the refresh, pop back to PageView so the
     // observer-driven Flow picks up the autosaved body.
@@ -133,7 +150,7 @@ internal fun PageEditWebScreen(
             delay(EDITOR_TIMEOUT_MS)
             if (viewModel.uiState.value is PageEditWebUiState.Loaded) {
                 val result = snackbarHostState.showSnackbar(
-                    message = "Editor is taking a long time to load",
+                    message = editorTimeoutMessage(loadFailures),
                     actionLabel = "Cancel",
                 )
                 if (result == SnackbarResult.ActionPerformed) onClose()
@@ -464,14 +481,16 @@ private fun EditorWebView(
                         injectionScript = buildInjectionScript(isDarkTheme),
                         allowedHost = allowedHost,
                         onExternalLink = openExternally,
+                        onLoadFailure = onLoadFailure,
                     )
-                    webChromeClient = ImagePickingChromeClient(
+                    webChromeClient = EditorChromeClient(
                         launchPicker = { callback ->
                             pendingFileCallback.value = callback
                             visualPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                             )
                         },
+                        onLoadFailure = onLoadFailure,
                     )
                     if (clearCacheFirst) {
                         // Server upgraded since we last opened the editor, so
@@ -545,7 +564,49 @@ private class StripChromeWebViewClient(
     private val injectionScript: String,
     private val allowedHost: String?,
     private val onExternalLink: (Uri) -> Unit,
+    private val onLoadFailure: (String) -> Unit,
 ) : WebViewClient() {
+    /**
+     * A sub-request the page made came back non-2xx.
+     *
+     * Fires for every sub-resource, so one entry is evidence rather than proof
+     * — a stray 404 on an icon looks the same as the XHR that actually stalled
+     * Text's bootstrap. Hence collected and shown rather than acted on; the
+     * failing path is what tells the two apart.
+     *
+     * Path only, never the whole URL: the `directediting` session URL carries a
+     * one-shot token in its query, and this string reaches logcat and the UI.
+     */
+    override fun onReceivedHttpError(
+        view: WebView?,
+        request: WebResourceRequest?,
+        errorResponse: WebResourceResponse?,
+    ) {
+        super.onReceivedHttpError(view, request, errorResponse)
+        val status = errorResponse?.statusCode ?: return
+        val detail = describeWebResourceFailure(status, request?.method, request?.url?.path)
+        Timber.tag(TAG).w(
+            "Editor sub-request failed: %s (mainFrame=%s)",
+            detail,
+            request?.isForMainFrame,
+        )
+        onLoadFailure(detail)
+    }
+
+    /** Transport-level failure, below HTTP — DNS, TLS, connection reset. */
+    override fun onReceivedError(
+        view: WebView?,
+        request: WebResourceRequest?,
+        error: WebResourceError?,
+    ) {
+        super.onReceivedError(view, request, error)
+        val description = redactUrls(error?.description?.toString().orEmpty())
+            .ifBlank { "load error" }
+        val detail = "$description on ${request?.url?.path ?: "/"}"
+        Timber.tag(TAG).w("Editor sub-request errored: %s", detail)
+        onLoadFailure(detail)
+    }
+
     /**
      * Keep only same-host `https` navigations inside the editor WebView;
      * route everything else out to the system browser / handler. Without
@@ -753,8 +814,9 @@ private const val DARK_THEME_CSS = """
  * through `PickVisualMedia` avoids the runtime `READ_MEDIA_IMAGES`
  * permission prompt on Android 13+.
  */
-private class ImagePickingChromeClient(
+private class EditorChromeClient(
     private val launchPicker: (ValueCallback<Array<Uri>?>) -> Unit,
+    private val onLoadFailure: (String) -> Unit,
 ) : WebChromeClient() {
     override fun onShowFileChooser(
         webView: WebView?,
@@ -763,6 +825,28 @@ private class ImagePickingChromeClient(
     ): Boolean {
         filePathCallback ?: return false
         launchPicker(filePathCallback)
+        return true
+    }
+
+    /**
+     * Text's own JavaScript errors.
+     *
+     * When the editor paints its skeleton and then never signals bootstrap,
+     * the reason is usually here — a rejected fetch, a failed session call —
+     * and nowhere else the app can see. [redactUrls] runs over the message and
+     * its source because a JS error routinely quotes the URL it failed on, and
+     * this screen's URL has a live token in its query.
+     */
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+        val message = consoleMessage ?: return false
+        val text = redactUrls(message.message().orEmpty())
+        val source = redactUrls(message.sourceId().orEmpty()).substringAfterLast('/')
+        if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+            Timber.tag(TAG).w("Editor JS error: %s (%s:%d)", text, source, message.lineNumber())
+            onLoadFailure("JS: ${text.take(MAX_JS_MESSAGE_CHARS)}")
+        } else {
+            Timber.tag(TAG).d("Editor JS: %s", text)
+        }
         return true
     }
 }
@@ -904,6 +988,52 @@ private fun openExternalLink(
  * unsaved keystrokes within the autosave debounce window are lost.
  */
 private const val JS_TEXT_CLOSE = "document.querySelector('.icon-close')?.click();"
+
+/**
+ * Message for the load-timeout snackbar.
+ *
+ * Naming the first failure turns "it's slow" into something actionable, and
+ * the count says whether it was one bad request or a cascade. Pure, so the
+ * wording is unit-testable without a WebView — like [decideNavigation].
+ */
+internal fun editorTimeoutMessage(failures: List<String>): String {
+    val base = "Editor is taking a long time to load"
+    return when {
+        failures.isEmpty() -> base
+        failures.size == 1 -> "$base — ${failures.first()}"
+        else -> "$base — ${failures.first()} (+${failures.size - 1} more)"
+    }
+}
+
+/** Token-free one-liner for a non-2xx sub-request. */
+internal fun describeWebResourceFailure(
+    status: Int,
+    method: String?,
+    path: String?,
+): String =
+    buildString {
+        append("HTTP ").append(status)
+        if (!method.isNullOrBlank()) append(' ').append(method)
+        append(" on ").append(path?.takeIf { it.isNotBlank() } ?: "/")
+    }
+
+/**
+ * Drop the query and fragment from every URL in [text], keeping scheme, host
+ * and path.
+ *
+ * Diagnostics quote URLs, and the one URL this screen loads carries a one-shot
+ * `directediting` token in its query. Redacting structurally rather than by
+ * keyword means a token under a name we didn't anticipate is still removed.
+ */
+internal fun redactUrls(text: String): String = URL_WITH_QUERY.replace(text) { it.groupValues[1] }
+
+private val URL_WITH_QUERY = Regex("(https?://[^\\s?#]*)[^\\s]*")
+
+/** Enough failures to show a pattern, few enough to stay a snackbar. */
+private const val MAX_RECORDED_LOAD_FAILURES = 5
+
+/** JS errors can run to paragraphs; the snackbar gets the useful start. */
+private const val MAX_JS_MESSAGE_CHARS = 120
 
 /**
  * 10-second timeout before we offer the user a way out. Same value as

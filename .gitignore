@@ -43,6 +43,10 @@ captures/
 # Keystore files & signing material
 *.jks
 *.keystore
+# ...except the debug key, which is deliberately public and version-controlled
+# so CI debug APKs share one signature and can upgrade each other. See
+# docs/SIGNING.md. The blanket rules above still cover every release key.
+!app/debug.keystore
 *.p12
 *.pem
 *.pkcs12

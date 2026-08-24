@@ -1,6 +1,6 @@
 # Release signing
 
-Release-signing keys never live in this repository. Local signed builds and CI signed builds both pick up the keystore from environment variables (or generated env entries in CI). This document records how to create the upload key, store it as a GitHub Actions secret, and verify the signed APK.
+Release-signing keys never live in this repository. The *debug* key is the deliberate exception and is committed — see [Debug signing](#debug-signing) at the end for why the two are treated differently. Local signed builds and CI signed builds both pick up the keystore from environment variables (or generated env entries in CI). This document records how to create the upload key, store it as a GitHub Actions secret, and verify the signed APK.
 
 The signing setup is **optional for local and PR builds**: if the env vars / CI secrets are absent, `assembleRelease` still produces an APK — it's just unsigned. Tag-driven releases are different: a tag build with any of the four signing secrets missing **fails**, and the workflow additionally refuses to publish unless a signed `app-release.apk` is present. An unsigned APK can never reach a GitHub release, because F-Droid pins `AllowedAPKSigningKeys` and would reject it anyway.
 
@@ -71,3 +71,46 @@ The certificate fingerprint reported here is what Android's PackageManager uses 
 2. Commit, push `main`.
 3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. CI builds, signs with the secrets, and attaches `app-release.apk` to the GitHub release that the workflow auto-creates from the tag.
+
+## Debug signing
+
+`app/debug.keystore` **is** in the repository, and that is intentional. It is
+the opposite decision from the release key, for the opposite reason.
+
+Without a committed debug key, AGP generates `~/.android/debug.keystore` on
+demand. Nothing in CI caches that file, so every runner invents a fresh
+throwaway key and each build's debug APK carries a different signature.
+Android then refuses to install one CI debug APK over the previous one —
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, surfaced on-device as a package
+conflict — and testers have to uninstall and lose their local state between
+builds. A fixed key removes that entirely.
+
+It is public and meant to be:
+
+```
+keystore   app/debug.keystore     alias      androiddebugkey
+password   android                key pass   android
+```
+
+That is the same well-known password AGP would have used for the key it
+generated, so this is no weaker than the default — it is just reproducible.
+Anyone can sign a debug APK with it. What that buys an attacker is bounded by
+what the key can reach: debug builds carry `applicationIdSuffix = ".debug"`,
+so this key can only ever produce `com.megamaced.nccollectives.debug`. It
+cannot sign, upgrade, or impersonate the released package, and F-Droid pins
+`AllowedAPKSigningKeys` to the release key regardless.
+
+Regenerating it (only necessary if it is ever lost) — after which every
+existing debug install has to be uninstalled once:
+
+```bash
+keytool -genkeypair -v \
+  -keystore app/debug.keystore \
+  -storetype PKCS12 \
+  -storepass android -keypass android \
+  -alias androiddebugkey \
+  -keyalg RSA -keysize 2048 -validity 36500 \
+  -dname "CN=Android Debug, O=Android, C=US"
+```
+
+CI prints the debug signer's SHA-256 on every run. It should never change.
