@@ -114,7 +114,7 @@ For a release build:
 
 Without signing env vars set, this produces an *unsigned* APK at `app/build/outputs/apk/release/app-release-unsigned.apk`. The signing setup (keystore generation, GitHub Actions secret names, local env vars) is documented in [`docs/SIGNING.md`](docs/SIGNING.md).
 
-R8 minification is on for release builds and the output is deterministic — two consecutive `assembleRelease` runs at the same commit produce byte-identical APKs (matching SHA-256). Release builds are around 4.9 MB; debug builds, which include the full debug tooling, are around 73 MB.
+R8 minification is on for release builds and the output is deterministic — two consecutive `assembleRelease` runs at the same commit produce byte-identical APKs (matching SHA-256). Release builds are around 6.9 MB; debug builds, which include the full debug tooling, are around 81 MB. The release figure grew from 4.9 MB when Single Sign-On arrived: the SSO library pulls in `appcompat` and `com.google.android.material` transitively, and that is what survives R8 and resource shrinking. CI prints both sizes on every run, so the numbers here can be checked against a measurement rather than trusted.
 
 ## Contributing
 
