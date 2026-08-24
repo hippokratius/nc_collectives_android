@@ -2,6 +2,7 @@ package com.megamaced.nccollectives.data.api.sso
 
 import okhttp3.Headers
 import okhttp3.HttpUrl
+import okhttp3.MediaType
 
 // Pure translation rules between an OkHttp request and the `NextcloudRequest`
 // the Nextcloud Files app expects, kept free of Android and of the SSO library
@@ -57,6 +58,22 @@ internal fun ssoQueryParams(url: HttpUrl): List<Pair<String, String>> =
  * Request headers safe to hand to the Files app, in the `Map<String,
  * List<String>>` shape `NextcloudRequest.Builder.setHeader` wants.
  *
+ * [bodyContentType] is not a convenience parameter — it is the whole reason
+ * this function can't just forward [headers]. An OkHttp request carries its
+ * media type on the *body*, not as a header: `Content-Type` is materialised
+ * by `BridgeInterceptor`, which sits **after** the application interceptors
+ * in `RealCall.getResponseWithInterceptorChain`. `SsoBridgeInterceptor` is an
+ * application interceptor that short-circuits, so that never runs and
+ * `headers` has no `Content-Type` at all.
+ *
+ * Forwarding without it sent every body to the server untyped. PHP only fills
+ * `$_POST` for a recognised form media type, so an OCS write arrived with no
+ * parameters and the server answered `400` — which is what broke
+ * `directEditing/open`, and with it every `@FormUrlEncoded` write in the app,
+ * page saves (`text/markdown`) and attachment uploads (their image type).
+ *
+ * An explicit header wins: this only supplies what OkHttp would have.
+ *
  * Two of the exclusions are load-bearing rather than tidy-up:
  *  - `OCS-APIRequest` — the Files app adds it itself and *throws* if the
  *    caller also sent it, which would turn every OCS call into a hard error.
@@ -65,13 +82,24 @@ internal fun ssoQueryParams(url: HttpUrl): List<Pair<String, String>> =
  *    app's process for no gain.
  *
  * `Host` and `Content-Length` describe a connection this app never makes; the
- * Files app derives both from its own account and request entity.
+ * Files app derives both from its own account and request entity. Passing a
+ * `Content-Length` on would be worse than useless — the Files app uses
+ * `addRequestHeader`, so ours would sit alongside the one its entity computes.
  */
-internal fun ssoForwardableHeaders(headers: Headers): Map<String, List<String>> =
-    headers
+internal fun ssoForwardableHeaders(
+    headers: Headers,
+    bodyContentType: MediaType?,
+): Map<String, List<String>> {
+    val forwarded = headers
         .names()
         .filterNot { it.lowercase() in SSO_EXCLUDED_REQUEST_HEADERS }
         .associateWith { headers.values(it) }
+    if (bodyContentType == null) return forwarded
+    if (forwarded.keys.any { it.equals(CONTENT_TYPE, ignoreCase = true) }) return forwarded
+    return forwarded + (CONTENT_TYPE to listOf(bodyContentType.toString()))
+}
+
+private const val CONTENT_TYPE = "Content-Type"
 
 private val SSO_EXCLUDED_REQUEST_HEADERS = setOf(
     "ocs-apirequest",

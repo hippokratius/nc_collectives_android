@@ -8,8 +8,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.megamaced.nccollectives.data.auth.ImportedSsoAccount
 import com.megamaced.nccollectives.data.auth.SsoAccountHolder
+import com.megamaced.nccollectives.data.auth.SsoImportOutcome
 import com.megamaced.nccollectives.data.prefs.UserPreferences
 import com.megamaced.nccollectives.data.prefs.UserPrefs
 import com.megamaced.nccollectives.share.SharePayload
@@ -17,6 +17,7 @@ import com.megamaced.nccollectives.share.SharePayloadHolder
 import com.megamaced.nccollectives.ui.navigation.NcCollectivesScaffold
 import com.megamaced.nccollectives.ui.theme.NcCollectivesTheme
 import com.nextcloud.android.sso.AccountImporter
+import com.nextcloud.android.sso.exceptions.AccountImportCancelledException
 import dagger.hilt.android.AndroidEntryPoint
 import timber.log.Timber
 import javax.inject.Inject
@@ -82,24 +83,56 @@ class MainActivity : ComponentActivity() {
         ) {
             return
         }
+        // A refused grant is handled here rather than by the library. Given
+        // this result, `AccountImporter.onActivityResult` routes the reason to
+        // `UiExceptionManager`, which builds a `MaterialAlertDialogBuilder` —
+        // and that needs a MaterialComponents theme, which this app (framework
+        // Material, Compose everywhere else) does not have. The dialog throws,
+        // the catch below swallows it, and the user is left staring at an
+        // unchanged login screen. `handleFailedAuthRequest` is public and
+        // *throws* the parsed reason instead of showing it, so take that.
+        if (requestCode == AccountImporter.REQUEST_AUTH_TOKEN_SSO && resultCode != RESULT_OK) {
+            ssoAccountHolder.publish(SsoImportOutcome.Failed(refusedGrantReason(data)))
+            return
+        }
         try {
             AccountImporter.onActivityResult(requestCode, resultCode, data, this) { account ->
                 ssoAccountHolder.publish(
-                    ImportedSsoAccount(
+                    SsoImportOutcome.Imported(
                         accountName = account.name,
                         userId = account.userId,
                         serverUrl = account.url,
                     ),
                 )
             }
+        } catch (e: AccountImportCancelledException) {
+            // Backing out of the account chooser is reported by throwing
+            // rather than by a result code. Not a failure — the user changed
+            // their mind and the login screen is still in front of them.
+            Timber.d(e, "Nextcloud SSO account import cancelled")
         } catch (e: Exception) {
-            // Backing out of the account chooser arrives as a thrown
-            // AccountImportCancelledException rather than a return value, so
-            // the ordinary "user changed their mind" path lands here too.
-            // Nothing to report: the login screen is still on screen.
-            Timber.d(e, "Nextcloud SSO account import did not complete")
+            Timber.w(e, "Nextcloud SSO account import failed")
+            ssoAccountHolder.publish(
+                SsoImportOutcome.Failed(
+                    e.message ?: "The Nextcloud app couldn't complete the sign-in.",
+                ),
+            )
         }
     }
+
+    /**
+     * Why the Files app refused, as a sentence for the login screen.
+     *
+     * `handleFailedAuthRequest` communicates by throwing: it parses the
+     * reason out of the result intent and raises it as an `SSOException`.
+     * Reaching that means it declined to explain, which is still worth saying.
+     */
+    private fun refusedGrantReason(data: Intent?): String =
+        runCatching { AccountImporter.handleFailedAuthRequest(this, data) }
+            .fold(
+                onSuccess = { "The Nextcloud app didn't grant access to that account." },
+                onFailure = { it.message ?: "The Nextcloud app denied access to that account." },
+            )
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

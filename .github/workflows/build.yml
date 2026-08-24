@@ -224,6 +224,17 @@ jobs:
           testDebugUnitTest
           assembleDebug assembleRelease
 
+      # The README quotes APK sizes, and a dependency bump can invalidate them
+      # silently. Printing them on every run means the number can be corrected
+      # from a measurement rather than a guess.
+      - name: Report APK sizes
+        if: always()
+        run: |
+          for apk in app/build/outputs/apk/*/*.apk; do
+            [ -f "$apk" ] || continue
+            printf '%s  %s\n' "$(du -h "$apk" | cut -f1)" "$apk"
+          done
+
       # Guards against the failure mode where signing silently degrades and an
       # uninstallable app-release-unsigned.apk gets published.
       - name: Verify the release APK is signed

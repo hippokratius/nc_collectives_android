@@ -79,7 +79,7 @@ class SsoBridgeInterceptor
                 .setMethod(request.method)
                 .setUrl(ssoServerRelativePath(request.url, storedHost))
                 .setParameter(ssoQueryParams(request.url).map { QueryParam(it.first, it.second) })
-                .setHeader(ssoForwardableHeaders(request.headers))
+                .setHeader(ssoForwardableHeaders(request.headers, request.body?.contentType()))
                 .setFollowRedirects(true)
                 .build()
             request.body?.let { nextcloudRequest.bodyAsStream = it.asInputStream() }

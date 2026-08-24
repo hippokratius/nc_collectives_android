@@ -7,6 +7,7 @@ import com.megamaced.nccollectives.data.auth.LoginFlowStatus
 import com.megamaced.nccollectives.data.auth.NextcloudLoginFlow
 import com.megamaced.nccollectives.data.auth.SessionManager
 import com.megamaced.nccollectives.data.auth.SsoAccountHolder
+import com.megamaced.nccollectives.data.auth.SsoImportOutcome
 import com.megamaced.nccollectives.data.auth.isSameServerHttpsUrl
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,13 +46,17 @@ class LoginViewModel
             // `consume()` first: the holder outlives this ViewModel, and a
             // recreation must not re-import an account that is already signed in.
             viewModelScope.launch {
-                ssoAccountHolder.imported.filterNotNull().collect { account ->
+                ssoAccountHolder.outcome.filterNotNull().collect { outcome ->
                     ssoAccountHolder.consume()
-                    onSsoAccountImported(
-                        accountName = account.accountName,
-                        userId = account.userId,
-                        serverUrl = account.serverUrl,
-                    )
+                    when (outcome) {
+                        is SsoImportOutcome.Imported -> onSsoAccountImported(
+                            accountName = outcome.accountName,
+                            userId = outcome.userId,
+                            serverUrl = outcome.serverUrl,
+                        )
+
+                        is SsoImportOutcome.Failed -> onSsoImportFailed(outcome.message)
+                    }
                 }
             }
         }

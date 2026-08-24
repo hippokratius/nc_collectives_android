@@ -6,19 +6,31 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The three fields of a `SingleSignOnAccount` this app actually stores. */
-data class ImportedSsoAccount(
-    val accountName: String,
-    val userId: String,
-    val serverUrl: String,
-)
+/**
+ * Outcome of an account import started from the login screen.
+ *
+ * [Imported] carries the three fields of a `SingleSignOnAccount` this app
+ * actually stores — deliberately not the object itself, because the token on
+ * it is the Files app's and nothing outside the SSO package should hold it.
+ */
+sealed interface SsoImportOutcome {
+    data class Imported(
+        val accountName: String,
+        val userId: String,
+        val serverUrl: String,
+    ) : SsoImportOutcome
+
+    data class Failed(
+        val message: String,
+    ) : SsoImportOutcome
+}
 
 /**
  * Single-process handoff for an account imported from the Nextcloud Files
  * app — the same shape as [com.megamaced.nccollectives.share.SharePayloadHolder],
  * and for the same reason.
  *
- * The released SSO library (1.3.x) has no `ActivityResultContract`: importing
+ * The released SSO library (1.0.x) has no `ActivityResultContract`: importing
  * an account is a two-step `startActivityForResult` dance (pick an account,
  * then grant this app access to it) that `AccountImporter` drives through the
  * Activity's `onActivityResult`. That lands in `MainActivity`, not in the
@@ -26,22 +38,21 @@ data class ImportedSsoAccount(
  * again. `LoginViewModel` observes this and [consume]s what it takes, so a
  * recreation can't replay an import that already happened.
  *
- * Deliberately carries plain strings rather than `SingleSignOnAccount`: the
- * token on that object is the Files app's, and nothing outside the SSO
- * package has any business holding it.
+ * Failures travel the same way rather than through the library's own error
+ * dialog — see the theme note in `MainActivity.onActivityResult`.
  */
 @Singleton
 class SsoAccountHolder
     @Inject
     constructor() {
-        private val _imported = MutableStateFlow<ImportedSsoAccount?>(null)
-        val imported: StateFlow<ImportedSsoAccount?> = _imported.asStateFlow()
+        private val _outcome = MutableStateFlow<SsoImportOutcome?>(null)
+        val outcome: StateFlow<SsoImportOutcome?> = _outcome.asStateFlow()
 
-        fun publish(account: ImportedSsoAccount) {
-            _imported.value = account
+        fun publish(outcome: SsoImportOutcome) {
+            _outcome.value = outcome
         }
 
         fun consume() {
-            _imported.value = null
+            _outcome.value = null
         }
     }

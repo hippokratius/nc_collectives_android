@@ -2,6 +2,7 @@ package com.megamaced.nccollectives.data.api.sso
 
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -120,13 +121,14 @@ class SsoRequestMappingTest {
     @Test
     fun `ocs and authorization headers are not forwarded`() {
         val forwarded = ssoForwardableHeaders(
-            Headers
+            headers = Headers
                 .Builder()
                 .add("OCS-APIRequest", "true")
                 .add("Authorization", "Basic c2VjcmV0")
                 .add("Accept", "application/json")
                 .add("If-None-Match", "\"abc123\"")
                 .build(),
+            bodyContentType = null,
         )
         assertEquals(setOf("Accept", "If-None-Match"), forwarded.keys)
         assertEquals(listOf("application/json"), forwarded["Accept"])
@@ -135,11 +137,12 @@ class SsoRequestMappingTest {
     @Test
     fun `the header filter is case insensitive`() {
         val forwarded = ssoForwardableHeaders(
-            Headers
+            headers = Headers
                 .Builder()
                 .add("ocs-apirequest", "true")
                 .add("authorization", "Basic x")
                 .build(),
+            bodyContentType = null,
         )
         assertTrue(forwarded.isEmpty())
     }
@@ -147,12 +150,13 @@ class SsoRequestMappingTest {
     @Test
     fun `connection scoped headers are dropped`() {
         val forwarded = ssoForwardableHeaders(
-            Headers
+            headers = Headers
                 .Builder()
                 .add("Host", "example.com")
                 .add("Content-Length", "12")
                 .add("Content-Type", "text/markdown")
                 .build(),
+            bodyContentType = null,
         )
         assertEquals(setOf("Content-Type"), forwarded.keys)
         assertFalse(forwarded.containsKey("Host"))
@@ -161,12 +165,85 @@ class SsoRequestMappingTest {
     @Test
     fun `repeated headers keep every value`() {
         val forwarded = ssoForwardableHeaders(
-            Headers
+            headers = Headers
                 .Builder()
                 .add("Accept", "application/json")
                 .add("Accept", "text/plain")
                 .build(),
+            bodyContentType = null,
         )
         assertEquals(listOf("application/json", "text/plain"), forwarded["Accept"])
+    }
+
+    /**
+     * The regression for the 400 the collaborative editor returned.
+     *
+     * OkHttp keeps a request's media type on the body and only materialises
+     * `Content-Type` in `BridgeInterceptor`, which runs after the application
+     * interceptors — so the short-circuiting SSO bridge never sees it in
+     * `headers`. Forwarding without it made the server treat an OCS form POST
+     * as parameterless, and `directEditing/open` answered 400 for a missing
+     * `path`.
+     */
+    @Test
+    fun `a form body contributes its content type`() {
+        val forwarded = ssoForwardableHeaders(
+            headers = Headers.Builder().add("Accept", "application/json").build(),
+            bodyContentType = "application/x-www-form-urlencoded".toMediaType(),
+        )
+        assertEquals(
+            listOf("application/x-www-form-urlencoded"),
+            forwarded["Content-Type"],
+        )
+        assertEquals(listOf("application/json"), forwarded["Accept"])
+    }
+
+    /** Page saves go out as markdown, not as untyped bytes. */
+    @Test
+    fun `a markdown body keeps its content type`() {
+        val forwarded = ssoForwardableHeaders(
+            headers = Headers.Builder().add("If-Match", "\"abc\"").build(),
+            bodyContentType = "text/markdown".toMediaType(),
+        )
+        assertEquals(listOf("text/markdown"), forwarded["Content-Type"])
+    }
+
+    /** Attachment uploads must not land on the server as octet-stream. */
+    @Test
+    fun `an image body keeps its content type`() {
+        val forwarded = ssoForwardableHeaders(
+            headers = Headers.Builder().build(),
+            bodyContentType = "image/jpeg".toMediaType(),
+        )
+        assertEquals(listOf("image/jpeg"), forwarded["Content-Type"])
+    }
+
+    /** Only ever supplies what OkHttp would have; never overrides a caller. */
+    @Test
+    fun `an explicit content type header beats the body`() {
+        val forwarded = ssoForwardableHeaders(
+            headers = Headers.Builder().add("Content-Type", "text/plain").build(),
+            bodyContentType = "application/json".toMediaType(),
+        )
+        assertEquals(listOf("text/plain"), forwarded["Content-Type"])
+        assertEquals(1, forwarded.keys.count { it.equals("Content-Type", ignoreCase = true) })
+    }
+
+    @Test
+    fun `a differently cased content type header is still not duplicated`() {
+        val forwarded = ssoForwardableHeaders(
+            headers = Headers.Builder().add("content-type", "text/plain").build(),
+            bodyContentType = "application/json".toMediaType(),
+        )
+        assertEquals(1, forwarded.keys.count { it.equals("Content-Type", ignoreCase = true) })
+    }
+
+    @Test
+    fun `a bodyless request gains no content type`() {
+        val forwarded = ssoForwardableHeaders(
+            headers = Headers.Builder().add("Accept", "application/json").build(),
+            bodyContentType = null,
+        )
+        assertFalse(forwarded.keys.any { it.equals("Content-Type", ignoreCase = true) })
     }
 }
