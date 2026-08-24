@@ -2,6 +2,7 @@ An unofficial native Android client for the Nextcloud Collectives app — wiki-s
 
 Features:
 
+* Sign in either by picking an account straight out of the Nextcloud app (Single Sign-On, no browser and no second password) or with a server URL via Login Flow v2.
 * Browse collectives and nested page trees.
 * Render markdown pages, including images, links, task lists, tables, syntax-highlighted fenced code blocks (Prism4j, themed against the app's Material 3 colour scheme), Nextcloud Text callouts (INFO / WARN / ERROR / SUCCESS), and ==highlight== marks.
 * View-first by default with a per-page edit toggle. Two editors ship side-by-side: a native markdown editor with formatting toolbar + live preview swap that works offline (default), and a collaborative WebView editor backed by Nextcloud Text (beta — multi-user real-time editing, callouts, multi-line tables, math) used when the server supports it and you're online. Choose the default under Settings → Editor.
@@ -28,12 +29,16 @@ Requirements:
 * Android 10 (API 29) or newer.
 * A Nextcloud instance with the Collectives app installed, served over HTTPS. Plaintext (http://) server URLs are refused at login.
 
-Authentication uses Nextcloud Login Flow v2 — you authorise the app from your browser and the server returns a device-scoped app password. Your account password is never seen, transmitted, or stored by the app. Revoke the device at any time from your Nextcloud security settings.
+Two ways to sign in. Neither one ever sees your account password.
+
+* Log in with the Nextcloud app (offered when the Nextcloud Files app is installed). Pick an account you have already set up there — no browser, no server URL to type, no second app password. This is the Single Sign-On mechanism the other Nextcloud clients use. It is not just a credential import: the Files app keeps only a hash of the hand-off token and performs every HTTP request on this app's behalf, so in this mode the app holds no credential at all and nothing it requests leaves the device except through the Files app, using the account and connection settings you configured there — including its TLS settings rather than this app's. Revoke access from the Nextcloud app or from your server's security settings.
+* Log in with a server address, via Nextcloud Login Flow v2. You authorise the app from your browser and the server returns a device-scoped app password. Revoke the device at any time from your Nextcloud security settings.
 
 Privacy:
 
-* The app talks only to the Nextcloud server you configure, plus (optionally) one request to api.github.com on launch for the update check, on a separate HTTP client that never carries your Nextcloud credentials.
+* The app talks only to the Nextcloud server you configure. The one third-party request — api.github.com, for the update check — is made when you tap "Check for updates" in Settings and at no other time; there is no launch-time or background call. It uses a separate HTTP client that never carries your Nextcloud credentials.
 * No Google Play Services. No Firebase. No analytics. No telemetry. No crash reporters. No advertising IDs.
 * The device-scoped app password is stored in EncryptedSharedPreferences (Tink-backed). Signing out wipes the keystore entry along with every cached row and preference.
+* Under Single Sign-On there is no password to store: the encrypted store holds the server URL, your user ID, and the name of the Nextcloud-app account to route through. Signing out unbinds from it without touching anything on the server — the grant is yours to revoke there.
 
 This project is not affiliated with, endorsed by, or supported by Nextcloud GmbH or the Nextcloud Collectives team. "Nextcloud" and "Collectives" are trademarks of their respective owners.
